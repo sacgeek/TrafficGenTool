@@ -1,0 +1,7 @@
+# NetLab Agent — worker node dependencies
+# Install on each worker VM as root:
+#   sudo pip3 install -r requirements-agent.txt
+
+websockets>=11.0
+aiohttp>=3.9
+yt-dlp>=2024.1.1

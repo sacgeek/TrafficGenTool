@@ -1,0 +1,85 @@
+/* ── Google Fonts ──────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  /* Backgrounds — darkest to lightest */
+  --bg:      #0d1117;   /* page background */
+  --bg1:     #161b22;   /* cards, panels */
+  --bg2:     #1c2330;   /* inputs, table rows */
+  --bg3:     #21262d;   /* hover, subtle fills */
+
+  /* Borders */
+  --border:  #30363d;
+  --border2: #484f58;
+
+  /* Text */
+  --text:    #e6edf3;   /* primary */
+  --text2:   #8b949e;   /* secondary / labels */
+  --text3:   #484f58;   /* muted / disabled */
+
+  /* Accent (blue) */
+  --accent:  #2f81f7;
+  --accent2: #1f6feb;
+
+  /* Status colours */
+  --green:   #3fb950;
+  --red:     #f85149;
+  --yellow:  #d29922;
+  --orange:  #e3812b;
+
+  /* Typography */
+  --sans:    'IBM Plex Sans',  system-ui, sans-serif;
+  --mono:    'IBM Plex Mono',  'Courier New', monospace;
+
+  /* Shape */
+  --radius:  4px;
+  --radius2: 6px;
+}
+
+/* ── Reset & base ──────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background:  var(--bg);
+  color:       var(--text);
+  font-family: var(--sans);
+  font-size:   14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbars (Webkit) ───────────────────────────────────────────────────── */
+::-webkit-scrollbar            { width: 6px; height: 6px; }
+::-webkit-scrollbar-track      { background: var(--bg); }
+::-webkit-scrollbar-thumb      { background: var(--border2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover{ background: var(--text3); }
+
+/* ── Inputs & selects ──────────────────────────────────────────────────────── */
+input, select, textarea {
+  color-scheme: dark;
+}
+
+/* ── Animations ────────────────────────────────────────────────────────────── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1;   transform: scale(1);    }
+  50%       { opacity: 0.5; transform: scale(0.85); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* Applied to newly-arriving table rows */
+.row-enter {
+  animation: fade-in 0.25s ease forwards;
+}
