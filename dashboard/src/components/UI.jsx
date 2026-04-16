@@ -39,14 +39,14 @@ export function StatusDot({ status }) {
   const colors = {
     connected: 'var(--green)',
     running:   'var(--accent)',
-    idle:      'var(--text3)',
+    idle:      'var(--green)',
     error:     'var(--red)',
     offline:   'var(--border2)',
     pending:   'var(--yellow)',
     complete:  'var(--text2)',
     stopped:   'var(--text3)',
   }
-  const animate = ['connected','running','pending'].includes(status)
+  const animate = ['connected','idle','running','pending'].includes(status)
   return (
     <span style={{
       display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
