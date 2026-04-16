@@ -443,8 +443,12 @@ class YoutubeWorker:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
+                # yt-dlp routes progress through _out_files['screen'] which is
+                # sys.stdout when an output file (not '-') is specified.  Merge
+                # stderr into stdout so we capture everything from proc.stdout
+                # regardless of which fd yt-dlp chooses.
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
                 env=_env,
             )
         except FileNotFoundError:
@@ -460,7 +464,7 @@ class YoutubeWorker:
         self._last_rate_ts = time.time()
 
         read_task = asyncio.create_task(
-            self._read_output(proc), name=f"yt-read-{self.worker_id}"
+            self._read_output(proc, proc.stdout), name=f"yt-read-{self.worker_id}"
         )
         stop_task = asyncio.create_task(
             self._stop_event.wait(), name=f"yt-stopwait-{self.worker_id}"
@@ -515,8 +519,12 @@ class YoutubeWorker:
                 self.worker_id, rc, self.url,
             )
 
-    async def _read_output(self, proc) -> None:
-        """Read yt-dlp stderr line-by-line, parsing progress updates.
+    async def _read_output(self, proc, stream) -> None:
+        """Read yt-dlp output line-by-line, parsing progress updates.
+
+        `stream` is proc.stdout (stderr is merged into it via STDOUT redirect).
+        yt-dlp routes progress through _out_files['screen'] = sys.stdout when
+        an output file is specified, so capturing stdout is required.
 
         Progress lines are parsed for throughput metrics.  All other lines
         (errors, warnings, info) are logged at DEBUG level immediately so they
@@ -524,7 +532,7 @@ class YoutubeWorker:
         collected for a WARNING-level summary if the process exits non-zero.
         """
         error_lines: list[str] = []
-        async for raw_line in proc.stderr:
+        async for raw_line in stream:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
