@@ -52,10 +52,8 @@ export default function App() {
     setTab('live')
   }, [])
 
-  // Filter snapshots to active session only for live view
-  const liveSnaps = activeSession
-    ? snapshots.filter(s => s.session_id && s.session_id.includes(activeSession.session_id?.slice(0, 4) || ''))
-    : snapshots
+  // Show all accumulated snapshots in the live view
+  const liveSnaps = snapshots
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>

@@ -223,6 +223,15 @@ async def agent_ws(ws: WebSocket):
                 logger.info("Node %s confirmed plan %s stopped", node_id, plan_id)
                 if node_id:
                     store.update_node_status(node_id, NodeStatus.IDLE)
+                    # If all nodes in the active session are now idle, mark it complete
+                    active = store.get_active_session()
+                    if active:
+                        still_running = [
+                            nid for nid in active.node_ids
+                            if store.get_node(nid) and store.get_node(nid).status == NodeStatus.RUNNING
+                        ]
+                        if not still_running:
+                            store.complete_session(active.session_id)
 
             # --- ERROR ---
             elif msg.type == MsgType.ERROR:
