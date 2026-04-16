@@ -65,7 +65,7 @@ STALL_THRESHOLD_RATIO = 0.8   # rate < this × min_kbps → counted as a stall
 # IMPORTANT: must be a regular uploaded video, NOT a live stream — yt-dlp
 # requires different flags for live streams and will exit code 1 otherwise.
 # For isolated lab networks, replace with an internal streaming server URL.
-DEFAULT_URL = "https://www.youtube.com/watch?v=5qap5aO4i9A"
+DEFAULT_URL = "https://www.youtube.com/watch?v=UgHKb_7884o"
 
 # ---------------------------------------------------------------------------
 # Quality profiles
