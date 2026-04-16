@@ -460,29 +460,44 @@ class YoutubeWorker:
 
         # Guard against a download that runs past the plan duration
         timeout = (max_seconds + 2.0) if max_seconds else None
-        done, pending = await asyncio.wait(
-            {read_task, stop_task},
-            timeout=timeout,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        try:
+            done, pending = await asyncio.wait(
+                {read_task, stop_task},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
 
-        for t in pending:
-            t.cancel()
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
 
-        # Ensure the process is dead
-        if proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=3.0)
-            except asyncio.TimeoutError:
-                pass
+            # Ensure the process is dead (normal / stop-event / timeout path)
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=3.0)
+                except asyncio.TimeoutError:
+                    pass
+
+        except asyncio.CancelledError:
+            # _teardown() cancelled the worker task while we were waiting.
+            # The code after asyncio.wait() would never run, so yt-dlp would
+            # be left alive as an orphan — kill it here before propagating.
+            for t in (read_task, stop_task):
+                if not t.done():
+                    t.cancel()
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            raise  # re-raise so the task is properly marked cancelled
 
         self._current_proc = None
         rc = proc.returncode
