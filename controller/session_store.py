@@ -140,9 +140,9 @@ class SessionStore:
             session.end_time = time.time()
             logger.info("Session stopped: %s", session_id)
             self._emit("session_update", session.summary_dict())
-            # Mark all participating nodes as idle
+            # Mark all participating nodes as connected (still online, waiting for next test)
             for nid in session.node_ids:
-                self.update_node_status(nid, NodeStatus.IDLE)
+                self.update_node_status(nid, NodeStatus.CONNECTED)
             self._clear_alert_state(session_id)
 
     def complete_session(self, session_id: str) -> None:
@@ -152,8 +152,9 @@ class SessionStore:
             session.end_time = time.time()
             logger.info("Session complete: %s", session_id)
             self._emit("session_update", session.summary_dict())
+            # Mark all participating nodes as connected (still online, waiting for next test)
             for nid in session.node_ids:
-                self.update_node_status(nid, NodeStatus.IDLE)
+                self.update_node_status(nid, NodeStatus.CONNECTED)
             self._clear_alert_state(session_id)
 
     def clear_sessions(self) -> int:
