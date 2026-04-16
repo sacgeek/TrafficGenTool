@@ -426,6 +426,8 @@ class YoutubeWorker:
             "--progress",
             "--no-part",        # no .part temp files
             "--limit-rate",     limit_rate,   # pace download to real viewing speed
+            "--retries",        "1",          # fail fast — our restart loop handles retries
+            "--fragment-retries", "1",        # same for individual DASH/HLS fragments
             "-o", "/dev/null",  # discard content — we only measure throughput
             self.url,
         ]
@@ -493,9 +495,10 @@ class YoutubeWorker:
     async def _read_output(self, proc) -> None:
         """Read yt-dlp stderr line-by-line, parsing progress updates.
 
-        Non-progress lines (errors, warnings, info) are collected and emitted
-        to the log at WARNING level if the process exits with a non-zero code,
-        making failures debuggable without requiring a separate log file.
+        Progress lines are parsed for throughput metrics.  All other lines
+        (errors, warnings, info) are logged at DEBUG level immediately so they
+        appear in real-time when running with --log-level DEBUG, and are also
+        collected for a WARNING-level summary if the process exits non-zero.
         """
         error_lines: list[str] = []
         async for raw_line in proc.stderr:
@@ -505,7 +508,7 @@ class YoutubeWorker:
             if _PROGRESS_RE.search(line):
                 self._parse_progress_line(line)
             else:
-                # Capture non-progress output (errors, warnings) for post-mortem
+                logger.debug("YoutubeWorker %s [yt-dlp]: %s", self.worker_id, line)
                 error_lines.append(line)
 
         await proc.wait()

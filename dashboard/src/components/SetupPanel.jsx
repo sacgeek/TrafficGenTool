@@ -10,8 +10,11 @@ const DEFAULT_PLAN = {
   web_users:     0,
   web_urls:      '',
   youtube_users: 0,
+  youtube_url:   '',
   duration_s:    60,
 }
+
+const DEFAULT_YOUTUBE_URL = 'https://www.youtube.com/watch?v=UgHKb_7884o'
 
 export function SetupPanel({ nodes, activeSession, onSessionStarted }) {
   const [plan,      setPlan]      = useState(DEFAULT_PLAN)
@@ -40,6 +43,7 @@ export function SetupPanel({ nodes, activeSession, onSessionStarted }) {
         ...plan,
         web_urls: urls,
         youtube_users: ytOk ? plan.youtube_users : 0,
+        youtube_url: plan.youtube_url.trim() || '',   // empty → worker uses its built-in default
       }
       const res = await api.createSession(payload)
       onSessionStarted?.(res.session_id)
@@ -98,6 +102,15 @@ export function SetupPanel({ nodes, activeSession, onSessionStarted }) {
               onChange={v => set('youtube_users', v)}
             />
           </div>
+          {plan.youtube_users > 0 && ytOk !== false && (
+            <Field label="YouTube video URL" hint={`Leave blank to use default — ${DEFAULT_YOUTUBE_URL}`}>
+              <Input
+                value={plan.youtube_url}
+                onChange={e => set('youtube_url', e.target.value)}
+                placeholder={DEFAULT_YOUTUBE_URL}
+              />
+            </Field>
+          )}
           <Field label="URLs to surf" hint="One per line — each web user cycles through all URLs">
             <textarea
               value={urlInput}
