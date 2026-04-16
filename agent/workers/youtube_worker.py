@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import time
@@ -421,9 +422,10 @@ class YoutubeWorker:
             "--format",         self.profile.yt_format,
             "--newline",        # one progress line per update (easy to parse)
             "--no-playlist",
-            "--no-warnings",
-            "--quiet",          # suppress info messages; --progress re-enables bar
-            "--progress",
+            "--no-warnings",    # suppress warnings but keep progress output
+            "--progress",       # show progress bar (do NOT use --quiet: it silences
+                                # _screen_file even when stderr is a pipe, causing yt-dlp
+                                # to produce no output regardless of --progress)
             "--no-part",        # no .part temp files
             "--limit-rate",     limit_rate,   # pace download to real viewing speed
             "--retries",        "1",          # fail fast — our restart loop handles retries
@@ -433,11 +435,17 @@ class YoutubeWorker:
         ]
         logger.debug("YoutubeWorker %s: %s", self.worker_id, " ".join(cmd))
 
+        # PYTHONUNBUFFERED forces line-by-line flushing when stderr is a pipe.
+        # Without it, Python block-buffers writes and progress lines only arrive
+        # in our reader when the buffer fills (64 KB) or the process exits.
+        _env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
+                env=_env,
             )
         except FileNotFoundError:
             logger.error(
