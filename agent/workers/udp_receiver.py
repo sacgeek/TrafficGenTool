@@ -66,7 +66,7 @@ class StreamSnapshot:
         }
 
 
-class _StreamState:
+class StreamState:
     """Tracks running stats for a single stream_id."""
 
     def __init__(self, stream_id: int, stream_type: StreamType) -> None:
@@ -190,7 +190,7 @@ class UDPReceiver:
         self.port            = port or PROFILES[stream_type].port
         self.on_snapshot     = on_snapshot
         self.report_interval = report_interval
-        self._streams: dict[int, _StreamState] = {}
+        self._streams: dict[int, StreamState] = {}
         self._stop_event     = asyncio.Event()
         self._transport      = None
 
@@ -199,7 +199,7 @@ class UDPReceiver:
 
     def _on_packet(self, stream_id: int, seq: int, send_ts_us: int) -> None:
         if stream_id not in self._streams:
-            self._streams[stream_id] = _StreamState(stream_id, self.stream_type)
+            self._streams[stream_id] = StreamState(stream_id, self.stream_type)
             logger.info(
                 "Receiver %s: new stream %d detected",
                 self.stream_type.value, stream_id,

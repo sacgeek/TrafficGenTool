@@ -111,9 +111,11 @@ class PlanExecutor:
                 role_str    = sess_cfg.get("role", "both")
 
                 role_map = {
-                    "both":     SessionRole.BOTH,
-                    "sender":   SessionRole.SENDER,
-                    "receiver": SessionRole.RECEIVER,
+                    "initiator": SessionRole.INITIATOR,
+                    "responder": SessionRole.RESPONDER,
+                    "both":      SessionRole.BOTH,
+                    "sender":    SessionRole.SENDER,
+                    "receiver":  SessionRole.RECEIVER,
                 }
                 role = role_map.get(role_str, SessionRole.BOTH)
 

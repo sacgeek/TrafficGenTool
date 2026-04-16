@@ -143,56 +143,66 @@ def distribute_plan(plan: TestPlan, nodes: list[NodeState]) -> dict[str, NodePla
         return slot
 
     # ------------------------------------------------------------------
-    # Voice calls: bidirectional pairs
+    # Voice calls: INITIATOR on node A, RESPONDER on node B
+    # Symmetric rate (1:1) — both sides send equal-rate audio streams.
     # ------------------------------------------------------------------
     for call_idx in range(plan.voice_calls):
         session_id = f"voice-{plan.plan_id}-{call_idx}"
         a = next_slot()
         b = next_slot()
-        _add_udp_session(node_plans, session_id, "voice", a, b, bidirectional=True)
+        _add_udp_session(node_plans, session_id, "voice", a, b)
 
     # ------------------------------------------------------------------
-    # Video calls: bidirectional pairs
+    # Video calls: INITIATOR on node A, RESPONDER on node B
+    # Symmetric rate (1:1) — both sides send equal-rate video streams.
     # ------------------------------------------------------------------
     for call_idx in range(plan.video_calls):
         session_id = f"video-{plan.plan_id}-{call_idx}"
         a = next_slot()
         b = next_slot()
-        _add_udp_session(node_plans, session_id, "video", a, b, bidirectional=True)
+        _add_udp_session(node_plans, session_id, "video", a, b)
 
     # ------------------------------------------------------------------
-    # Screen shares: one sender, all subsequent slots are receivers
+    # Screen shares: INITIATOR (presenter) + RESPONDER viewers
+    #
+    # The presenter is the INITIATOR for each viewer: it binds a separate
+    # ephemeral source port per viewer and sends the full-rate screen stream
+    # to viewer_ip:3480.  Each viewer (RESPONDER) binds viewer_ip:3480,
+    # learns the presenter's ephemeral port from the first packet, and sends
+    # back at 1/10th rate (responder_rate_ratio = 0.1) — approximating the
+    # RTCP / quality-feedback traffic a real viewer would generate.
+    #
+    # Firewall view per viewer:
+    #   presenter_ip:50041  ↔  viewer_ip:3480  (one bidirectional session)
     # ------------------------------------------------------------------
     for share_idx in range(plan.screen_shares):
         session_id = f"screen-{plan.plan_id}-{share_idx}"
-        sender = next_slot()
+        presenter = next_slot()
 
-        # Number of receivers: use remaining slots up to a max of 4
-        # to avoid flooding small test environments
-        receivers: list[_UserSlot] = []
+        # Cap viewer count at 4 to avoid flooding small test environments
+        viewers: list[_UserSlot] = []
         viewer_count = min(4, len(all_slots) - 1)
         for _ in range(max(1, viewer_count)):
-            receivers.append(next_slot())
+            viewers.append(next_slot())
 
-        # Sender
-        node_plans[sender.node_id].udp_sessions.append({
+        # Presenter: INITIATOR towards all viewers (agent spawns one session
+        # per peer IP so each gets its own ephemeral source port)
+        node_plans[presenter.node_id].udp_sessions.append({
             "session_id":  session_id,
             "stream_type": "screenshare",
-            "role":        "sender",
-            "local_ip":    sender.ip,
-            "peer_ips":    [r.ip for r in receivers],
-            "peer_ports":  [3480] * len(receivers),
+            "role":        "initiator",
+            "local_ip":    presenter.ip,
+            "peer_ips":    [v.ip for v in viewers],
         })
 
-        # Receivers
-        for recv in receivers:
-            node_plans[recv.node_id].udp_sessions.append({
+        # Each viewer: RESPONDER — binds well-known port, sends low-rate ack back
+        for viewer in viewers:
+            node_plans[viewer.node_id].udp_sessions.append({
                 "session_id":  session_id,
                 "stream_type": "screenshare",
-                "role":        "receiver",
-                "local_ip":    recv.ip,
-                "peer_ip":     sender.ip,
-                "peer_port":   3480,
+                "role":        "responder",
+                "local_ip":    viewer.ip,
+                "peer_ip":     presenter.ip,
             })
 
     logger.info(
@@ -211,22 +221,28 @@ def _add_udp_session(
     stream_type: str,
     a: _UserSlot,
     b: _UserSlot,
-    bidirectional: bool,
 ) -> None:
-    """Add sender/receiver entries to both nodes for a paired session."""
-    # Node A: sends to B, receives from B
+    """
+    Add INITIATOR/RESPONDER entries to both nodes for a paired session.
+
+    Node A is the INITIATOR: it binds an ephemeral source port and sends to
+    node B's well-known port.  Node B is the RESPONDER: it binds the
+    well-known port and sends return traffic back to A's ephemeral port.
+
+    This mirrors the TURN-relay pattern so stateful firewalls track the pair
+    as a single bidirectional session instead of two separate flows.
+    """
     node_plans[a.node_id].udp_sessions.append({
         "session_id":  session_id,
         "stream_type": stream_type,
-        "role":        "both" if bidirectional else "sender",
+        "role":        "initiator",
         "local_ip":    a.ip,
         "peer_ip":     b.ip,
     })
-    # Node B: mirror
     node_plans[b.node_id].udp_sessions.append({
         "session_id":  session_id,
         "stream_type": stream_type,
-        "role":        "both" if bidirectional else "receiver",
+        "role":        "responder",
         "local_ip":    b.ip,
         "peer_ip":     a.ip,
     })

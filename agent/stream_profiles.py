@@ -34,6 +34,8 @@ class StreamProfile:
     interval_ms: float               # target inter-packet interval (ms)
     dscp: int                        # DSCP marking (for QoS testing)
     label: str
+    responder_rate_ratio: float = 1.0  # fraction of initiator rate that RESPONDER sends back
+                                       # 1.0 = symmetric (voice, video); 0.1 = 10:1 (screenshare)
 
     def pick_src_port(self) -> int:
         """Return a random source port from this stream type's assigned range."""
@@ -70,13 +72,14 @@ VIDEO_PROFILE = StreamProfile(
 )
 
 SCREENSHARE_PROFILE = StreamProfile(
-    stream_type       = StreamType.SCREENSHARE,
-    port              = 3480,
-    src_port_range    = (50040, 50059),  # Teams-Sharing source range
-    packet_size_bytes = 1300,            # slightly larger, screen content
-    interval_ms       = 33.3,            # 30 fps baseline; bursty in practice
-    dscp              = 18,              # AF21
-    label             = "screenshare",
+    stream_type          = StreamType.SCREENSHARE,
+    port                 = 3480,
+    src_port_range       = (50040, 50059),  # Teams-Sharing source range
+    packet_size_bytes    = 1300,            # slightly larger, screen content
+    interval_ms          = 33.3,            # 30 fps baseline; bursty in practice
+    dscp                 = 18,              # AF21
+    label                = "screenshare",
+    responder_rate_ratio = 0.1,             # viewers send ~3 fps of RTCP/control back (10:1 ratio)
 )
 
 PROFILES: dict[StreamType, StreamProfile] = {
