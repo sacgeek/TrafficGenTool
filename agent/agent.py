@@ -158,7 +158,6 @@ class PlanExecutor:
                                 d = snap.to_dict() if hasattr(snap, "to_dict") else dict(snap)
                                 d["session_id"]  = wid
                                 d["stream_type"] = "web"
-                                d["node_id"]     = self.config.node_id
                                 asyncio.ensure_future(self.on_snapshot(d))
                             except Exception as exc:
                                 logger.error("Web snapshot callback error: %s", exc)
@@ -200,7 +199,6 @@ class PlanExecutor:
                                 d = snap.to_dict() if hasattr(snap, "to_dict") else dict(snap)
                                 d["session_id"]  = wid
                                 d["stream_type"] = "youtube"
-                                d["node_id"]     = self.config.node_id
                                 asyncio.ensure_future(self.on_snapshot(d))
                             except Exception as exc:
                                 logger.error("YouTube snapshot callback error: %s", exc)
