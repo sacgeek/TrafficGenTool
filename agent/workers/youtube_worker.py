@@ -58,11 +58,14 @@ logger = logging.getLogger(__name__)
 REPORT_INTERVAL_S    = 2.0    # telemetry cadence (matches UDP and web workers)
 STALL_THRESHOLD_RATIO = 0.8   # rate < this × min_kbps → counted as a stall
 
-# Default URL: a 12-hour ambient video used as a stable, long-lived bandwidth
-# sink.  With --limit-rate pacing the download, a single yt-dlp process will
-# run for the entire test duration without restarting, which is what we want.
+# Default URL: a 11-hour recorded (non-live) ambient video used as a stable,
+# long-lived bandwidth sink.  With --limit-rate pacing the download to the
+# quality tier's required bitrate, a single yt-dlp process will run for the
+# entire test duration without restarting.
+# IMPORTANT: must be a regular uploaded video, NOT a live stream — yt-dlp
+# requires different flags for live streams and will exit code 1 otherwise.
 # For isolated lab networks, replace with an internal streaming server URL.
-DEFAULT_URL = "https://www.youtube.com/watch?v=jfKfPfyJRdk"
+DEFAULT_URL = "https://www.youtube.com/watch?v=5qap5aO4i9A"
 
 # ---------------------------------------------------------------------------
 # Quality profiles
@@ -488,11 +491,31 @@ class YoutubeWorker:
             )
 
     async def _read_output(self, proc) -> None:
-        """Read yt-dlp stderr line-by-line, parsing progress updates."""
+        """Read yt-dlp stderr line-by-line, parsing progress updates.
+
+        Non-progress lines (errors, warnings, info) are collected and emitted
+        to the log at WARNING level if the process exits with a non-zero code,
+        making failures debuggable without requiring a separate log file.
+        """
+        error_lines: list[str] = []
         async for raw_line in proc.stderr:
             line = raw_line.decode("utf-8", errors="replace").strip()
-            self._parse_progress_line(line)
+            if not line:
+                continue
+            if _PROGRESS_RE.search(line):
+                self._parse_progress_line(line)
+            else:
+                # Capture non-progress output (errors, warnings) for post-mortem
+                error_lines.append(line)
+
         await proc.wait()
+
+        if proc.returncode not in (None, 0, -9) and error_lines:
+            logger.warning(
+                "YoutubeWorker %s: yt-dlp stderr (rc=%s):\n  %s",
+                self.worker_id, proc.returncode,
+                "\n  ".join(error_lines[-20:]),   # last 20 lines to keep logs manageable
+            )
 
     def _parse_progress_line(self, line: str) -> None:
         """
