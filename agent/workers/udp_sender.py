@@ -66,7 +66,7 @@ class SenderStats:
 
 class UDPSender:
     """
-    Sends a UDP stream from src_ip:ephemeral → dst_ip:profile.port.
+    Sends a UDP stream from src_ip:src_port → dst_ip:profile.port.
 
     Parameters
     ----------
@@ -74,7 +74,8 @@ class UDPSender:
     stream_type : StreamType enum
     src_ip      : source IP to bind (one of the node's IP aliases)
     dst_ip      : destination IP (peer worker node)
-    dst_port    : override port (defaults to profile.port)
+    src_port    : override source port (defaults to a random port from profile.src_port_range)
+    dst_port    : override destination port (defaults to profile.port)
     duration_s  : how long to send; None = run until stop() called
     """
 
@@ -84,6 +85,7 @@ class UDPSender:
         stream_type: StreamType,
         src_ip:      str,
         dst_ip:      str,
+        src_port:    int | None = None,
         dst_port:    int | None = None,
         duration_s:  float | None = None,
     ) -> None:
@@ -92,6 +94,7 @@ class UDPSender:
         self.src_ip      = src_ip
         self.dst_ip      = dst_ip
         self.profile: StreamProfile = PROFILES[stream_type]
+        self.src_port    = src_port or self.profile.pick_src_port()
         self.dst_port    = dst_port or self.profile.port
         self.duration_s  = duration_s
         self._stop_event = asyncio.Event()
@@ -115,18 +118,18 @@ class UDPSender:
         """
         loop = asyncio.get_running_loop()
 
-        # Create a UDP socket bound to our assigned IP alias
+        # Create a UDP socket bound to our assigned IP alias and Teams source port
         transport, protocol = await loop.create_datagram_endpoint(
             asyncio.DatagramProtocol,
-            local_addr=(self.src_ip, 0),
+            local_addr=(self.src_ip, self.src_port),
             remote_addr=(self.dst_ip, self.dst_port),
             family=10 if ":" in self.src_ip else 2,  # AF_INET6 or AF_INET
         )
         self._transport = transport
 
         logger.info(
-            "Sender %d started: %s → %s:%d  type=%s  %.0f pps  %.0f kbps",
-            self.stream_id, self.src_ip, self.dst_ip, self.dst_port,
+            "Sender %d started: %s:%d → %s:%d  type=%s  %.0f pps  %.0f kbps",
+            self.stream_id, self.src_ip, self.src_port, self.dst_ip, self.dst_port,
             self.stream_type.value,
             self.profile.packets_per_second,
             self.profile.bitrate_kbps,

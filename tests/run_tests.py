@@ -131,9 +131,22 @@ class TestMOSCalculation(unittest.TestCase):
 class TestStreamProfiles(unittest.TestCase):
 
     def test_teams_ports(self):
+        # Destination ports (fixed, within valid Teams STUN/TURN range)
         self.assertEqual(VOICE_PROFILE.port,       3478)
         self.assertEqual(VIDEO_PROFILE.port,       3479)
         self.assertEqual(SCREENSHARE_PROFILE.port, 3480)
+        # Source port ranges (used by router DPI to classify traffic by stream type)
+        self.assertEqual(VOICE_PROFILE.src_port_range,       (50000, 50019))
+        self.assertEqual(VIDEO_PROFILE.src_port_range,       (50020, 50039))
+        self.assertEqual(SCREENSHARE_PROFILE.src_port_range, (50040, 50059))
+
+    def test_pick_src_port_in_range(self):
+        for profile in (VOICE_PROFILE, VIDEO_PROFILE, SCREENSHARE_PROFILE):
+            lo, hi = profile.src_port_range
+            for _ in range(20):
+                p = profile.pick_src_port()
+                self.assertGreaterEqual(p, lo)
+                self.assertLessEqual(p, hi)
 
     def test_voice_bitrate_range(self):
         self.assertGreater(VOICE_PROFILE.bitrate_kbps, 50)
