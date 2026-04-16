@@ -58,9 +58,11 @@ logger = logging.getLogger(__name__)
 REPORT_INTERVAL_S    = 2.0    # telemetry cadence (matches UDP and web workers)
 STALL_THRESHOLD_RATIO = 0.8   # rate < this × min_kbps → counted as a stall
 
-# Default URL: a long public video usable as a stable bandwidth sink.
+# Default URL: a 12-hour ambient video used as a stable, long-lived bandwidth
+# sink.  With --limit-rate pacing the download, a single yt-dlp process will
+# run for the entire test duration without restarting, which is what we want.
 # For isolated lab networks, replace with an internal streaming server URL.
-DEFAULT_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+DEFAULT_URL = "https://www.youtube.com/watch?v=jfKfPfyJRdk"
 
 # ---------------------------------------------------------------------------
 # Quality profiles
@@ -231,13 +233,21 @@ class YoutubeSnapshot:
         loss_pct = min(100.0, round(
             self.stall_seconds / max(0.001, REPORT_INTERVAL_S) * 100.0, 1
         ))
+        # Estimate received packets from bytes downloaded using the standard
+        # TCP maximum segment size (1460 bytes payload).  This is an
+        # approximation — actual segment sizes vary — but it gives the
+        # dashboard a meaningful non-zero counter that tracks real traffic
+        # rather than a hardcoded 0.
+        _TCP_MSS = 1460
+        est_packets = self.bytes_downloaded // _TCP_MSS
+
         return {
             # Required controller StreamSnapshot fields
             "timestamp":        self.timestamp,
             "stream_type":      "youtube",        # overridden by agent wrapper
             "session_id":       self.worker_id,   # overridden by agent wrapper
-            "packets_recv":     0,
-            "packets_expected": 0,
+            "packets_recv":     est_packets,
+            "packets_expected": est_packets,      # no loss expected for TCP
             "loss_pct":         loss_pct,
             "latency_ms":       0.0,
             "jitter_ms":        0.0,
@@ -392,6 +402,16 @@ class YoutubeWorker:
         Launch one yt-dlp process, read its stderr until the download ends
         or a stop/timeout is triggered.
         """
+        # Throttle to 110 % of the quality tier's required bitrate so the
+        # download paces like a real viewer session.  Without a rate limit
+        # yt-dlp saturates the link, finishes the video in seconds, and the
+        # constant process restarts appear as many short-lived flows on the
+        # router rather than one persistent stream.
+        # min_kbps is in kilo-bits/s; yt-dlp --limit-rate takes bytes/s (K suffix).
+        limit_kbps   = self.profile.min_kbps * 1.1          # 10 % headroom
+        limit_kBps   = max(1, round(limit_kbps / 8))        # convert to KB/s
+        limit_rate   = f"{limit_kBps}K"
+
         cmd = [
             ytdlp,
             "--source-address", self.local_ip,
@@ -402,6 +422,7 @@ class YoutubeWorker:
             "--quiet",          # suppress info messages; --progress re-enables bar
             "--progress",
             "--no-part",        # no .part temp files
+            "--limit-rate",     limit_rate,   # pace download to real viewing speed
             "-o", "/dev/null",  # discard content — we only measure throughput
             self.url,
         ]
@@ -505,11 +526,21 @@ class YoutubeWorker:
         self._last_rate_ts = now
 
     def _emit_snapshot(self) -> None:
-        """Compute window statistics, build a YoutubeSnapshot, call on_snapshot."""
-        if self._win_rates_bps:
-            avg_kbps = (sum(self._win_rates_bps) / len(self._win_rates_bps)) * 8 / 1_000.0
-        else:
-            avg_kbps = 0.0
+        """Compute window statistics, build a YoutubeSnapshot, call on_snapshot.
+
+        If no progress lines arrived in this window (e.g. during the brief gap
+        between a completed download and the next yt-dlp restart, or while
+        yt-dlp is resolving the format before the first byte arrives) there is
+        no meaningful throughput to report.  Emitting a 0-kbps snapshot in
+        that case would produce MOS 1.0 and pollute the rolling average, so we
+        skip it entirely and let the accumulators roll over into the next window.
+        """
+        if not self._win_rates_bps:
+            # Nothing to report yet — window accumulators stay untouched so
+            # any partial stall time carries forward into the next window.
+            return
+
+        avg_kbps = (sum(self._win_rates_bps) / len(self._win_rates_bps)) * 8 / 1_000.0
 
         stall_frac = min(1.0, self._win_stall_s / max(0.001, self.report_interval))
         mos, label, color = youtube_mos(avg_kbps, self.profile.min_kbps, stall_frac)
