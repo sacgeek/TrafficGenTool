@@ -37,7 +37,7 @@ function AlertBanner({ alerts }) {
 }
 
 export default function App() {
-  const { nodes, sessions, snapshots, activeAlerts, activeSession, connected } = useControllerWS()
+  const { nodes, sessions, snapshots, activeAlerts, activeSession, connected, refreshSessions } = useControllerWS()
   const [tab, setTab] = useState('live')  // 'live' | 'setup'
 
   const handleStop = useCallback(async (sessionId) => {
@@ -46,7 +46,8 @@ export default function App() {
 
   const handleClear = useCallback(async () => {
     await api.clearSessions()
-  }, [])
+    await refreshSessions()
+  }, [refreshSessions])
 
   const handleSessionStarted = useCallback((sessionId) => {
     setTab('live')

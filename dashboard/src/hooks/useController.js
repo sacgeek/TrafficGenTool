@@ -118,8 +118,17 @@ export function useControllerWS() {
     }
   }, [connect])
 
+  const refreshSessions = useCallback(async () => {
+    try {
+      const data = await api.sessions()
+      if (mountedRef.current) setSessions(data)
+    } catch (e) {
+      // ignore fetch errors
+    }
+  }, [])
+
   const activeSession  = sessions.find(s => s.status === 'running' || s.status === 'pending') || null
   const activeAlerts   = alerts.filter(a => a.is_active)
 
-  return { nodes, sessions, snapshots, alerts, activeAlerts, activeSession, connected, lastEvent }
+  return { nodes, sessions, snapshots, alerts, activeAlerts, activeSession, connected, lastEvent, refreshSessions }
 }
