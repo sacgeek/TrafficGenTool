@@ -74,32 +74,40 @@ DEFAULT_URL = "https://www.youtube.com/watch?v=UgHKb_7884o"
 
 @dataclass(frozen=True)
 class QualityProfile:
-    label:     str    # "360p", "480p", "720p", "1080p"
-    yt_format: str    # yt-dlp --format string
-    min_kbps:  float  # minimum download rate (kbps) to sustain this quality
+    label:        str    # "360p", "480p", "720p", "1080p"
+    yt_format:    str    # yt-dlp --format string
+    min_kbps:     float  # buffering threshold — rate below this causes stalls
+    typical_kbps: float  # expected real-world download rate for this tier;
+                         # used as the yt-dlp rate limit and the MOS baseline
+                         # (ratio = 1.0 at this rate → MOS 4.0 "Good")
 
 # Format strings use fallback chaining: prefer a combined stream, fall back to
 # the best available video+audio merge so the worker still runs on all URLs.
+#
+# typical_kbps reflects what a user on a decent broadband connection actually
+# receives — well above the minimum required to decode the stream.  It paces
+# the yt-dlp download so sessions last realistically long rather than
+# completing in seconds.
 QUALITY_PROFILES: dict[str, QualityProfile] = {
     "360p":  QualityProfile(
         "360p",
         "best[height<=360]/bestvideo[height<=360]+bestaudio/best",
-        500,
+        min_kbps=500,   typical_kbps=1_500,
     ),
     "480p":  QualityProfile(
         "480p",
         "best[height<=480]/bestvideo[height<=480]+bestaudio/best",
-        1_500,
+        min_kbps=1_500, typical_kbps=3_000,
     ),
     "720p":  QualityProfile(
         "720p",
         "best[height<=720]/bestvideo[height<=720]+bestaudio/best",
-        3_000,
+        min_kbps=3_000, typical_kbps=5_000,
     ),
     "1080p": QualityProfile(
         "1080p",
         "best[height<=1080]/bestvideo[height<=1080]+bestaudio/best",
-        8_000,
+        min_kbps=8_000, typical_kbps=10_000,
     ),
 }
 
@@ -148,17 +156,22 @@ def parse_rate_bps(rate_str: str, unit_str: str) -> float:
 # MOS scoring for streaming video
 # ---------------------------------------------------------------------------
 #
-# Maps download throughput ratio (actual_kbps / required_kbps) to a raw MOS.
-# Breakpoints chosen so the labels align with the dashboard colour thresholds.
+# Ratio is  actual_kbps / typical_kbps  (not min_kbps).
+#
+# Design goal: ratio = 1.0 (downloading at the expected typical rate) maps
+# exactly to MOS 4.0 ("Good").  The score drops as the rate falls below
+# typical, with a steeper drop once the rate approaches min_kbps (where
+# real buffering / stalling begins).  min_kbps is still used separately for
+# stall detection (see STALL_THRESHOLD_RATIO) and is not part of this table.
 
 _RATIO_BREAKPOINTS: list[tuple[float, float]] = [
-    (0.0,  1.0),   # no throughput  → bad
-    (0.5,  2.0),   # 50% required   → poor
-    (0.8,  3.1),   # 80% required   → borderline poor
-    (1.0,  3.6),   # 100% required  → fair
-    (1.5,  4.0),   # 150% required  → good
-    (2.0,  4.3),   # 200% required  → excellent
-    (3.0,  5.0),   # 300% required  → perfect
+    (0.0,  1.0),   # no throughput                       → 1.0  Bad
+    (0.25, 2.0),   # 25 % of typical  (well below min)  → 2.0  Poor
+    (0.50, 3.0),   # 50 % of typical  (near/below min)  → 3.0  Poor
+    (0.75, 3.6),   # 75 % of typical  (degraded)        → 3.6  Fair
+    (1.00, 4.0),   # 100 % of typical (normal)          → 4.0  Good  ← baseline
+    (1.50, 4.5),   # 150 % of typical (above expected)  → 4.5  Excellent
+    (2.00, 5.0),   # 200 % of typical (excellent)       → 5.0  Perfect
 ]
 
 
@@ -177,20 +190,24 @@ def _ratio_to_raw_mos(ratio: float) -> float:
 
 
 def youtube_mos(
-    avg_kbps:       float,
-    required_kbps:  float,
-    stall_fraction: float,   # 0.0–1.0 fraction of the window that was stalled
+    avg_kbps:      float,
+    typical_kbps:  float,  # expected download rate for this quality tier
+    stall_fraction: float, # 0.0–1.0 fraction of the window that was stalled
 ) -> tuple[float, str, str]:
     """
     Derive a 1.0–5.0 MOS-style score from YouTube streaming metrics.
 
-    Stall penalty: a fully stalled window reduces the score by up to 1.5 MOS
-    points, reflecting the subjective badness of a freezing stream vs. merely
-    a slow one.
+    Scoring is relative to typical_kbps (not min_kbps), so a session
+    downloading at the expected real-world rate produces exactly MOS 4.0.
+    The score degrades as rate falls below typical, reflecting network
+    congestion or interference before buffering actually occurs.
+
+    Stall penalty: a fully stalled window reduces the score by up to 1.5
+    MOS points on top of the throughput-based score.
 
     Returns (mos, label, color).
     """
-    ratio = avg_kbps / max(1.0, required_kbps)
+    ratio = avg_kbps / max(1.0, typical_kbps)
     raw   = _ratio_to_raw_mos(ratio)
     mos   = max(1.0, min(5.0, round(raw - stall_fraction * 1.5, 2)))
 
@@ -406,15 +423,14 @@ class YoutubeWorker:
         Launch one yt-dlp process, read its stderr until the download ends
         or a stop/timeout is triggered.
         """
-        # Throttle to 110 % of the quality tier's required bitrate so the
-        # download paces like a real viewer session.  Without a rate limit
-        # yt-dlp saturates the link, finishes the video in seconds, and the
-        # constant process restarts appear as many short-lived flows on the
-        # router rather than one persistent stream.
-        # min_kbps is in kilo-bits/s; yt-dlp --limit-rate takes bytes/s (K suffix).
-        limit_kbps   = self.profile.min_kbps * 1.1          # 10 % headroom
-        limit_kBps   = max(1, round(limit_kbps / 8))        # convert to KB/s
-        limit_rate   = f"{limit_kBps}K"
+        # Pace the download to typical_kbps — the expected real-world download
+        # rate for this quality tier.  This keeps yt-dlp from saturating the
+        # link and finishing the video in seconds (which would cause constant
+        # process restarts visible as short-lived flows on the router), while
+        # also matching the rate at which the MOS baseline of 4.0 is achieved.
+        # typical_kbps is in kilo-bits/s; yt-dlp --limit-rate takes bytes/s.
+        limit_kBps = max(1, round(self.profile.typical_kbps / 8))
+        limit_rate = f"{limit_kBps}K"
 
         cmd = [
             ytdlp,
@@ -604,7 +620,7 @@ class YoutubeWorker:
         avg_kbps = (sum(self._win_rates_bps) / len(self._win_rates_bps)) * 8 / 1_000.0
 
         stall_frac = min(1.0, self._win_stall_s / max(0.001, self.report_interval))
-        mos, label, color = youtube_mos(avg_kbps, self.profile.min_kbps, stall_frac)
+        mos, label, color = youtube_mos(avg_kbps, self.profile.typical_kbps, stall_frac)
 
         snapshot = YoutubeSnapshot(
             worker_id        = self.worker_id,
