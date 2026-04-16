@@ -530,6 +530,10 @@ class YoutubeWorker:
             return
 
         rate_bps = parse_rate_bps(m.group("rate"), m.group("unit"))
+        logger.debug(
+            "YoutubeWorker %s: parsed rate=%.0f bps (%.1f kbps) from: %s",
+            self.worker_id, rate_bps, rate_bps * 8 / 1000, line,
+        )
         now      = time.time()
 
         # Accumulate bytes in this window using the trapezoidal approximation:
