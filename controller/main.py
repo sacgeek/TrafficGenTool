@@ -80,6 +80,42 @@ dashboard_bus = DashboardConnections()
 
 
 # ---------------------------------------------------------------------------
+# Agent WebSocket connection registry
+# ---------------------------------------------------------------------------
+
+class AgentConnections:
+    """Tracks connected agent WebSocket connections by node_id."""
+
+    def __init__(self) -> None:
+        self._connections: dict[str, WebSocket] = {}
+
+    def register(self, node_id: str, ws: WebSocket) -> None:
+        self._connections[node_id] = ws
+
+    def remove(self, node_id: str) -> None:
+        self._connections.pop(node_id, None)
+
+    async def send(self, node_id: str, msg_type: str, payload: dict) -> bool:
+        ws = self._connections.get(node_id)
+        if not ws:
+            logger.warning("No active connection for node %s — cannot send %s", node_id, msg_type)
+            return False
+        try:
+            await ws.send_text(json.dumps({"type": msg_type, "payload": payload}))
+            return True
+        except Exception as exc:
+            logger.warning("Failed to send %s to %s: %s", msg_type, node_id, exc)
+            return False
+
+    async def broadcast(self, msg_type: str, payload: dict) -> None:
+        for node_id in list(self._connections):
+            await self.send(node_id, msg_type, payload)
+
+
+agent_bus = AgentConnections()
+
+
+# ---------------------------------------------------------------------------
 # Store → Dashboard bridge
 # ---------------------------------------------------------------------------
 
@@ -142,6 +178,7 @@ async def agent_ws(ws: WebSocket):
                 node_id = info.node_id
                 store.register_node(node_id, info)
                 store.update_node_status(node_id, NodeStatus.CONNECTED)
+                agent_bus.register(node_id, ws)
                 await ws.send_text(WSMessage(
                     type=MsgType.PING, payload={"msg": "registered"}
                 ).to_json())
@@ -200,6 +237,7 @@ async def agent_ws(ws: WebSocket):
     finally:
         if node_id:
             store.remove_node(node_id)
+            agent_bus.remove(node_id)
 
 
 # ---------------------------------------------------------------------------
@@ -322,11 +360,13 @@ async def create_and_run_session(plan: TestPlan):
     # Create session
     session = store.create_session(plan, list(node_plans.keys()))
 
-    # Dispatch to agents
-    # NOTE: In the full system this sends over the agent WS connections.
-    # We emit a session_update event; the actual WS dispatch is done by
-    # the agent connection manager (wired in a full deployment).
-    # For now we broadcast via the dashboard so the UI can show the plan.
+    # Dispatch to agents over their WebSocket connections
+    for node_id, node_plan in node_plans.items():
+        sent = await agent_bus.send(node_id, "RUN_PLAN", node_plan.model_dump())
+        if not sent:
+            logger.warning("Could not dispatch RUN_PLAN to %s — not connected?", node_id)
+
+    # Also broadcast to dashboard so the UI can show the plan
     await dashboard_bus.broadcast("plan_dispatched", {
         "session_id": session.session_id,
         "plan_id":    plan.plan_id,
@@ -387,8 +427,9 @@ async def stop_session(session_id: str):
     if session.status not in (SessionStatus.PENDING, SessionStatus.RUNNING):
         raise HTTPException(409, "Session is not running")
     store.stop_session(session_id)
-    # Broadcast STOP_PLAN to all agents via dashboard event
-    # (agent WS handler will relay STOP_PLAN messages)
+    # Send STOP_PLAN directly to all connected agents
+    await agent_bus.broadcast("STOP_PLAN", {"session_id": session_id})
+    # Also notify the dashboard
     await dashboard_bus.broadcast("stop_plan", {"session_id": session_id})
     return {"stopped": True}
 
