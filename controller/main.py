@@ -245,8 +245,17 @@ async def agent_ws(ws: WebSocket):
         logger.error("Agent WS error (%s): %s", node_id, exc)
     finally:
         if node_id:
-            store.remove_node(node_id)
-            agent_bus.remove(node_id)
+            # Only evict if this WS is still the current one for this node.
+            # A faster reconnect may have already re-registered the same node_id
+            # with a new WS; in that case the old handler must not clobber it.
+            if agent_bus._connections.get(node_id) is ws:
+                store.remove_node(node_id)
+                agent_bus.remove(node_id)
+            else:
+                logger.info(
+                    "Stale WS closed for %s — a newer connection is active, skipping eviction",
+                    node_id,
+                )
 
 
 # ---------------------------------------------------------------------------
