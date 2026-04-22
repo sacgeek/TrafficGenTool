@@ -28,11 +28,9 @@ export function SessionHistory({ sessions, activeSession, onStop, onClear }) {
                 {stopping ? 'STOPPING…' : '■ STOP'}
               </Btn>
             )}
-            {pastSessions.length > 0 && (
-              <Btn variant="ghost" small onClick={onClear}>
-                CLEAR
-              </Btn>
-            )}
+            <Btn variant="ghost" small onClick={onClear}>
+              CLEAR
+            </Btn>
           </div>
         }
       />
