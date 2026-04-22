@@ -321,7 +321,13 @@ class UDPSession:
         src_port = profile.pick_src_port()
 
         recv_state = StreamState(self.stream_id, self.stream_type)
-        protocol   = _FullDuplexProtocol(on_recv=recv_state.record_packet)
+
+        def _on_recv(stream_id: int, seq: int, send_ts_us: int) -> None:
+            # Filter stray packets on the same port; only record our own stream.
+            if stream_id == self.stream_id:
+                recv_state.record_packet(seq, send_ts_us)
+
+        protocol = _FullDuplexProtocol(on_recv=_on_recv)
 
         # Connected UDP socket: sendto(data) goes to remote_addr; only receives
         # from remote_addr.  RESPONDER sends back from profile.port → our src_port.
@@ -431,8 +437,13 @@ class UDPSession:
                 (1000.0 / profile.interval_ms) * profile.responder_rate_ratio,
             )
 
+        def _on_recv(stream_id: int, seq: int, send_ts_us: int) -> None:
+            # Filter stray packets on the same port; only record our own stream.
+            if stream_id == self.stream_id:
+                recv_state.record_packet(seq, send_ts_us)
+
         protocol = _FullDuplexProtocol(
-            on_recv      = recv_state.record_packet,
+            on_recv      = _on_recv,
             on_peer_addr = _on_peer,
         )
 
