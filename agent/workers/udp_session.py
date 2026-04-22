@@ -59,6 +59,7 @@ import asyncio
 import logging
 import struct
 import time
+import zlib
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable
@@ -218,7 +219,10 @@ class UDPSession:
         self.peer_ip     = peer_ip
         self.duration_s  = duration_s
         self.on_snapshot = on_snapshot
-        self.stream_id   = stream_id or (abs(hash(session_id)) % (2**31))
+        # Deterministic across processes — both ends of a session must derive
+        # the same stream_id from the same session_id.  Python's built-in hash()
+        # is randomized per interpreter (PYTHONHASHSEED), so we use CRC32.
+        self.stream_id   = stream_id or (zlib.crc32(session_id.encode()) & 0x7FFFFFFF)
 
         # Legacy role workers
         self._sender:   UDPSender   | None = None
