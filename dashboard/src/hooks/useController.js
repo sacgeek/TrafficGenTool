@@ -127,8 +127,10 @@ export function useControllerWS() {
     }
   }, [])
 
+  const clearSnapshots = useCallback(() => setSnapshots([]), [])
+
   const activeSession  = sessions.find(s => s.status === 'running' || s.status === 'pending') || null
   const activeAlerts   = alerts.filter(a => a.is_active)
 
-  return { nodes, sessions, snapshots, alerts, activeAlerts, activeSession, connected, lastEvent, refreshSessions }
+  return { nodes, sessions, snapshots, alerts, activeAlerts, activeSession, connected, lastEvent, refreshSessions, clearSnapshots }
 }
