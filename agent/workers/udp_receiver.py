@@ -105,9 +105,13 @@ class StreamState:
         transit_us = now_us - send_ts_us
         # Cap to avoid wild spikes from clock skew at startup
         if abs(transit_us) < 5_000_000:   # ignore if > 5 s (clock unsync'd)
-            self._latency_window.append(transit_us)
+            # Floor at 0 — tiny negative values from sub-ms NTP drift or the
+            # send/recv timestamping order would otherwise drag displayed
+            # latency below zero.  Jitter continues to use the raw transit
+            # below, so its variance is unaffected by the clamp.
+            self._latency_window.append(max(0.0, transit_us))
 
-            # RFC-3550 jitter
+            # RFC-3550 jitter (uses raw transit — clock skew cancels in the delta)
             if self._last_transit is not None:
                 d = abs(transit_us - self._last_transit)
                 self._jitter_us += (d - self._jitter_us) / 16.0
