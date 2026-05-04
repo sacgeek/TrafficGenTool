@@ -242,7 +242,7 @@ export function SetupPanel({ nodes, activeSession, onSessionStarted }) {
               </div>
 
               {/* Server IP + secret */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 10, alignItems: 'end' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 10, alignItems: 'start' }}>
                 <Field
                   label="RADIUS Server IP"
                   hint={isInternalMode ? `Auto-filled · controller address` : 'External server — ClearPass or similar'}
