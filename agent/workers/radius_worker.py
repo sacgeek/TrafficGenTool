@@ -20,7 +20,7 @@ Packets are ClearPass-compatible:
   - Framed-IP-Address included in both Access-Request and Accounting packets
   - Calling-Station-Id set to a deterministic MAC derived from the alias IP
   - NAS-Port-Type, NAS-Identifier forwarded from NodePlan config
-  - Aruba User-Role VSA (vendor 14823, attr 25) is carried in the Accept
+  - Aruba User-Role VSA (vendor 14823, attr 1 = Aruba-User-Role) is carried in the Accept
     response from the server; the agent does not need to set it
 
 All network operations are asyncio-native (create_datagram_endpoint) and

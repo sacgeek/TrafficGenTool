@@ -13,7 +13,7 @@ Aruba gear can correlate the user's assigned IP with their role.
 
 Aruba User-Role VSA:
     Vendor-Id  : 14823
-    Vendor-Type: 25  (Aruba-User-Role)
+    Vendor-Type: 1   (Aruba-User-Role)
     Value      : UTF-8 role string, e.g. "Employee"
 """
 
@@ -63,7 +63,7 @@ ACCT_STATUS_STOP         = 2
 ACCT_STATUS_INTERIM      = 3
 
 ARUBA_VENDOR_ID          = 14823
-ARUBA_USER_ROLE_ATTR     = 25
+ARUBA_USER_ROLE_ATTR     = 1
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +266,7 @@ class RadiusServer:
         # Always include Framed-IP-Address in the Accept (ClearPass-compatible)
         if framed_ip:
             resp_attrs += _ip_attr(ATTR_FRAMED_IP_ADDRESS, framed_ip)
-        # Aruba User-Role VSA (vendor 14823, attr 25)
+        # Aruba User-Role VSA (vendor 14823, attr 1 = Aruba-User-Role)
         resp_attrs += _vsa(
             ARUBA_VENDOR_ID,
             ARUBA_USER_ROLE_ATTR,

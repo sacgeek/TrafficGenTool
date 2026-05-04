@@ -64,11 +64,11 @@ depending on the configured enforcement profile.
 |---|-----------|------|-------|-------|
 | 6 | Service-Type | Integer | `2` (Framed) | Standard framed response |
 | 8 | Framed-IP-Address | IP Address | `10.0.0.101` | **Always included.** Echoes the Framed-IP-Address from the Access-Request so ClearPass and Aruba infrastructure can correlate the user's IP with their assigned role |
-| 26 | Vendor-Specific | VSA | vendor=`14823`, attr=`25`, value=`"Employee"` | **Aruba-User-Role VSA.** The role string is taken from the session's active role list, assigned round-robin across users |
+| 26 | Vendor-Specific | VSA | vendor=`14823`, attr=`1`, value=`"Employee"` | **Aruba-User-Role VSA** (VSA ID `14823_1`). The role string is taken from the session's active role list, assigned round-robin across users |
 
 > **ClearPass note:** ClearPass sends the same Aruba VSA structure (vendor 14823,
-> attr 25) in its Access-Accept responses.  NetLab's internal server uses an
-> identical packet layout so the agent's parsing code works in both modes.
+> attr 1 / VSA ID `14823_1`) in its Access-Accept responses.  NetLab's internal
+> server uses an identical packet layout so the agent's parsing code works in both modes.
 
 > **Access-Reject:** In internal mode, NetLab never rejects a valid Access-Request.
 > ClearPass may reject if the shared secret is wrong or the NAS-Identifier does
@@ -137,7 +137,7 @@ Type   : 26  (Vendor-Specific)
 Length : 2 + 4 + 2 + len(role_string)
 Value  :
   ├─ Vendor-Id    : 0x00003967  (14823 decimal, big-endian)
-  ├─ Vendor-Type  : 25
+  ├─ Vendor-Type  : 1           (Aruba-User-Role  —  VSA ID 14823_1)
   ├─ Vendor-Length: 2 + len(role_string)
   └─ Vendor-Value : UTF-8 role string  e.g. "Employee"
 ```
