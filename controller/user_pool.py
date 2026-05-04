@@ -1,9 +1,17 @@
 """
 NetLab RADIUS user pool.
 
-Provides a fixed pool of 100 fictitious usernames and the assign_users()
-helper that maps a list of alias IPs to RadiusUser objects, round-robining
-the supplied role list and deriving deterministic MAC addresses from each IP.
+Provides a named pool of fictitious users and the assign_users() helper that
+maps a list of alias IPs to RadiusUser objects.
+
+Role assignment rules:
+  - Users with a fixed_role always receive that role, regardless of the
+    session's configured role list.
+  - Users without a fixed_role rotate through the session's active role list
+    (round-robin, counting only the rotating users).
+
+MAC addresses are derived deterministically from each alias IP so ClearPass
+builds consistent endpoint identity records across sessions.
 """
 
 from __future__ import annotations
@@ -11,27 +19,46 @@ from __future__ import annotations
 from controller.models import RadiusUser
 
 # ---------------------------------------------------------------------------
-# 100 fictitious usernames  (10 first-names × 10 last-names)
+# User pool
+#
+# Each entry is (username, fixed_role_or_None).
+# fixed_role overrides the session role list for that user every time.
 # ---------------------------------------------------------------------------
 
-_FIRST_NAMES = [
-    "alex", "blake", "casey", "drew", "elliot",
-    "finley", "gael", "harper", "indira", "jaden",
+USER_POOL: list[tuple[str, str | None]] = [
+    ("robert.california",     "CEO"),
+    ("jo.bennett",            None),
+    ("david.wallace",         None),
+    ("pam.beesly",            "Employee"),
+    ("jim.halpert",           "Employee"),
+    ("jan.levinson",          None),
+    ("erin.hannon",           None),
+    ("michael.scott",         "Manager"),
+    ("dwight.schrute",        "Employee"),
+    ("karen.filippelli",      None),
+    ("andy.bernard",          "Employee"),
+    ("kevin.malone",          None),
+    ("kelly.kapoor",          None),
+    ("cathy.simms",           None),
+    ("angela.martin",         None),
+    ("toby.flenderson",       None),
+    ("holly.flax",            None),
+    ("stanley.hudson",        None),
+    ("ryan.howard",           None),
+    ("gabe.lewis",            "HR"),
+    ("creed.bratton",         None),
+    ("phyllis.vance",         None),
+    ("meredith.palmer",       None),
+    ("darryl.philbin",        None),
+    ("nellie.bertram",        None),
+    ("oscar.martinez",        None),
+    ("pete.miller",           None),
+    ("roy.anderson",          None),
+    ("carol.stills",          None),
+    ("billy.merchant",        None),
+    ("jada.philbin",          "GUEST"),
+    ("hannah.smoterich-barr", None),
 ]
-
-_LAST_NAMES = [
-    "chen", "garcia", "jones", "kim", "lee",
-    "martin", "nguyen", "patel", "robinson", "smith",
-]
-
-# Generates exactly 100 entries: alex.chen … jaden.smith
-USER_POOL: list[str] = [
-    f"{first}.{last}"
-    for first in _FIRST_NAMES
-    for last  in _LAST_NAMES
-]
-
-assert len(USER_POOL) == 100, "USER_POOL must contain exactly 100 entries"
 
 
 # ---------------------------------------------------------------------------
@@ -56,20 +83,25 @@ def _ip_to_mac(ip: str) -> str:
 # ---------------------------------------------------------------------------
 
 def assign_users(
-    ip_list:  list[str],
-    roles:    list[str],
-    plan_id:  str = "plan",
+    ip_list: list[str],
+    roles:   list[str],
+    plan_id: str = "plan",
 ) -> list[RadiusUser]:
     """
     Assign a username and role to every IP in ip_list.
 
-    - Usernames are drawn sequentially from USER_POOL (wraps at 100).
-    - Roles are assigned round-robin across the active role list.
-    - Each user gets a stable Acct-Session-Id of "<plan_id>-u<index>".
+    Assignment rules:
+      - Usernames are drawn sequentially from USER_POOL, wrapping if
+        ip_list is longer than the pool.
+      - Users with a fixed role always receive that role.
+      - Users without a fixed role receive roles round-robin from *roles*,
+        with the counter advancing only for rotating users so the distribution
+        across roles stays even.
+      - Each user receives a stable Acct-Session-Id of "<plan_id>-u<index>".
 
     Args:
         ip_list:  Ordered list of alias IP strings to assign users to.
-        roles:    List of Aruba role names to cycle through (must be non-empty).
+        roles:    Active Aruba role names for rotating users (must be non-empty).
         plan_id:  Short plan identifier used to build Acct-Session-Id values.
 
     Returns:
@@ -79,12 +111,23 @@ def assign_users(
         roles = ["Employee"]
 
     result: list[RadiusUser] = []
+    rotate_counter = 0  # counts only rotating (no fixed_role) users
+
     for idx, ip in enumerate(ip_list):
+        username, fixed_role = USER_POOL[idx % len(USER_POOL)]
+
+        if fixed_role:
+            role = fixed_role
+        else:
+            role = roles[rotate_counter % len(roles)]
+            rotate_counter += 1
+
         result.append(RadiusUser(
-            username        = USER_POOL[idx % len(USER_POOL)],
+            username        = username,
             ip_address      = ip,
             mac_address     = _ip_to_mac(ip),
-            aruba_role      = roles[idx % len(roles)],
+            aruba_role      = role,
             acct_session_id = f"{plan_id}-u{idx}",
         ))
+
     return result

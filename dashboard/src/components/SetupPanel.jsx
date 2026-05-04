@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Card, CardHeader, Btn, Field, Input, NumericInput } from './UI.jsx'
 import { api } from '../hooks/useController.js'
 
-const DEFAULT_ROLES = ['Employee', 'HR', 'CEO', 'IOT', 'GUEST']
+const DEFAULT_ROLES = ['Employee', 'HR', 'IOT', 'GUEST']
 
 const DEFAULT_PLAN = {
   name:             'Lab test',

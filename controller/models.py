@@ -162,7 +162,7 @@ class TestPlan(BaseModel):
     radius_server_ip: str | None = None   # None → auto-fill with controller's own IP
     radius_secret:    str        = "testing123"
     aruba_roles:      list[str]  = Field(
-        default_factory=lambda: ["Employee", "HR", "CEO", "IOT", "GUEST"]
+        default_factory=lambda: ["Employee", "HR", "IOT", "GUEST"]
     )
     nas_identifier:   str        = "netlab-controller"
     nas_port_type:    int        = 15    # 15=Ethernet  19=Wireless-802.11
