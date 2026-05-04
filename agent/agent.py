@@ -78,11 +78,12 @@ class PlanExecutor:
     """
 
     def __init__(self, config: AgentConfig, on_snapshot) -> None:
-        self.config      = config
-        self.on_snapshot = on_snapshot
+        self.config         = config
+        self.on_snapshot    = on_snapshot
         self._tasks: list[asyncio.Task] = []
-        self._ip_mgr = None
-        self._stop_event = asyncio.Event()
+        self._ip_mgr        = None
+        self._radius_worker = None   # set when radius_enabled=True in the plan
+        self._stop_event    = asyncio.Event()
 
     async def run(self, node_plan: dict) -> None:
         from agent.ip_manager import IPAliasManager
@@ -104,7 +105,17 @@ class PlanExecutor:
         provisioned = await self._ip_mgr.provision_all()
         logger.info("Provisioned %d IP aliases", len(provisioned))
 
-        # 2. Start UDP sessions
+        # 2. RADIUS authentication (before traffic — optional)
+        if node_plan.get("radius_enabled"):
+            try:
+                from agent.workers.radius_worker import RadiusWorker
+                self._radius_worker = RadiusWorker(node_plan)
+                await self._radius_worker.authenticate_all()
+            except Exception as exc:
+                logger.error("RADIUS authentication failed: %s", exc)
+                # Non-fatal — continue with traffic generation
+
+        # 3. Start UDP sessions
         for sess_cfg in node_plan.get("udp_sessions", []):
             try:
                 stream_type = StreamType(sess_cfg["stream_type"])
@@ -142,7 +153,7 @@ class PlanExecutor:
             except Exception as exc:
                 logger.error("Failed to start UDP session %s: %s", sess_cfg.get("session_id"), exc)
 
-        # 3. Start web workers
+        # 4. Start web workers
         web_users = node_plan.get("web_users", 0)
         web_urls  = node_plan.get("web_urls", [])
         if web_users > 0 and web_urls:
@@ -182,7 +193,7 @@ class PlanExecutor:
                     "and aiohttp is installed (pip install aiohttp)"
                 )
 
-        # 4. YouTube workers
+        # 5. YouTube workers
         yt_users = node_plan.get("youtube_users", 0)
         yt_url   = node_plan.get("youtube_url", "") or ""
         if yt_users > 0:
@@ -226,7 +237,7 @@ class PlanExecutor:
                     "is present and yt-dlp is installed (pip install yt-dlp)"
                 )
 
-        # 5. Duration watchdog
+        # 6. Duration watchdog
         if duration_s:
             async def _watchdog():
                 await asyncio.sleep(float(duration_s))
@@ -234,7 +245,7 @@ class PlanExecutor:
                 self._stop_event.set()
             self._tasks.append(asyncio.create_task(_watchdog(), name="watchdog"))
 
-        # 6. Wait for stop
+        # 7. Wait for stop
         await self._stop_event.wait()
         await self._teardown()
         logger.info("PlanExecutor: plan %s finished", plan_id)
@@ -255,10 +266,22 @@ class PlanExecutor:
         return _cb
 
     async def _teardown(self) -> None:
+        # Cancel all traffic workers first
         for t in self._tasks:
             t.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+
+        # RADIUS logoff — send Accounting-Stop before aliases are removed
+        # so packets still leave from the correct source IPs
+        if self._radius_worker:
+            try:
+                await self._radius_worker.logoff_all()
+            except Exception as exc:
+                logger.error("RADIUS logoff error: %s", exc)
+            self._radius_worker = None
+
+        # Remove IP aliases
         if self._ip_mgr:
             await self._ip_mgr.teardown_all()
         logger.info("PlanExecutor: teardown complete")

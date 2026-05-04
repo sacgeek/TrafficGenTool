@@ -6,6 +6,8 @@ Takes a TestPlan submitted from the dashboard and:
   2. Allocates IP aliases for each simulated user on each node.
   3. Pairs up voice/video/screenshare sessions across nodes.
   4. Produces one NodePlan per worker node, ready to be dispatched via WS.
+  5. If radius_enabled, assigns fictitious usernames + roles to every IP
+     slot and forwards the RadiusUser list in each NodePlan.
 
 IP allocation strategy:
   Each node has a declared ip_range_start / ip_range_end.
@@ -28,6 +30,7 @@ import logging
 from dataclasses import dataclass
 
 from controller.models import TestPlan, NodePlan, NodeState, StreamType
+from controller.user_pool import assign_users
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +58,19 @@ def _ip_range(start: str, end: str) -> list[str]:
     return result
 
 
-def distribute_plan(plan: TestPlan, nodes: list[NodeState]) -> dict[str, NodePlan]:
+def distribute_plan(
+    plan:          TestPlan,
+    nodes:         list[NodeState],
+    controller_ip: str = "",
+) -> dict[str, NodePlan]:
     """
     Build per-node plans from a TestPlan.
+
+    Args:
+        plan:          The full test plan from the dashboard.
+        nodes:         List of connected, idle worker nodes.
+        controller_ip: The controller's own primary IP address, used to
+                       resolve radius_server_ip when it is None (internal mode).
 
     Returns
     -------
@@ -204,6 +217,39 @@ def distribute_plan(plan: TestPlan, nodes: list[NodeState]) -> dict[str, NodePla
                 "local_ip":    viewer.ip,
                 "peer_ip":     presenter.ip,
             })
+
+    # ------------------------------------------------------------------
+    # RADIUS user assignment
+    # When radius_enabled, assign a fictitious username + role to every
+    # IP slot in each node's plan so agents know who each alias IP "is".
+    # ------------------------------------------------------------------
+    if plan.radius_enabled:
+        # Resolve the RADIUS server IP:
+        #   None  → use controller's own IP (internal mode)
+        #   other → use as-is (ClearPass / external mode)
+        resolved_radius_ip = plan.radius_server_ip or controller_ip or "127.0.0.1"
+        roles = plan.aruba_roles or ["Employee"]
+
+        for node in nodes:
+            np = node_plans[node.node_id]
+            # Collect every IP this node will provision (union of all sessions + web/yt)
+            node_ips: list[str] = list(node_slots[node.node_id])
+            np.radius_users = assign_users(
+                ip_list  = node_ips,
+                roles    = roles,
+                plan_id  = plan.plan_id,
+            )
+            np.radius_enabled     = True
+            np.radius_server_ip   = resolved_radius_ip
+            np.radius_secret      = plan.radius_secret
+            np.nas_identifier     = plan.nas_identifier
+            np.nas_port_type      = plan.nas_port_type
+
+        logger.info(
+            "RADIUS enabled: server=%s, roles=%s, users/node≈%d",
+            resolved_radius_ip, roles,
+            len(node_plans[nodes[0].node_id].radius_users) if nodes else 0,
+        )
 
     logger.info(
         "Plan %s distributed to %d nodes: voice=%d video=%d screen=%d web=%d yt=%d",

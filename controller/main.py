@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import socket
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -35,12 +36,38 @@ from controller.models import (
 from controller.session_store import store
 from controller.distributor import distribute_plan, PlanError
 from controller.export import export_csv, export_pdf
+from controller.radius_server import radius_server, start_radius_server
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _get_own_ip() -> str:
+    """
+    Return the controller's primary outbound IP address.
+
+    Uses a connect-without-send trick (UDP to 8.8.8.8:80) so no actual
+    traffic is generated.  Falls back to 127.0.0.1 on any error.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+OWN_IP = _get_own_ip()
+logger.info("Controller primary IP resolved to: %s", OWN_IP)
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +161,31 @@ async def lifespan(app: FastAPI):
     store.subscribe("snapshot",       _on_store_event)
     store.subscribe("alert",          _on_store_event)
     store.subscribe("alert_cleared",  _on_store_event)
+
+    # Start the built-in RADIUS server.  It sits idle until a plan with
+    # radius_enabled=True and radius_server_ip == OWN_IP is dispatched,
+    # at which point set_session() arms it with the correct credentials.
+    # If the ports are already bound (e.g. a real RADIUS server is present),
+    # we log a warning and continue — the tool can still forward to an
+    # external server.
+    _radius_transports: list = []
+    try:
+        t_auth, t_acct = await start_radius_server(radius_server)
+        _radius_transports.extend([t_auth, t_acct])
+        logger.info("Built-in RADIUS server started (UDP 1812/1813)")
+    except OSError as exc:
+        logger.warning(
+            "Could not bind RADIUS ports (1812/1813): %s — "
+            "internal RADIUS mode unavailable; use an external server.",
+            exc,
+        )
+
     logger.info("NetLab controller started.")
     yield
+
+    # Shut down RADIUS transports cleanly
+    for t in _radius_transports:
+        t.close()
     logger.info("NetLab controller shutting down.")
 
 
@@ -369,11 +419,33 @@ async def create_and_run_session(plan: TestPlan):
     if not idle_nodes:
         raise HTTPException(503, "No idle worker nodes connected.")
 
-    # Distribute the plan
+    # Distribute the plan (pass our own IP so the distributor can resolve
+    # radius_server_ip=None → controller address for internal mode)
     try:
-        node_plans = distribute_plan(plan, idle_nodes)
+        node_plans = distribute_plan(plan, idle_nodes, controller_ip=OWN_IP)
     except PlanError as exc:
         raise HTTPException(400, str(exc))
+
+    # Arm the built-in RADIUS server if this session uses internal mode.
+    # Internal mode = radius_enabled AND the resolved radius_server_ip
+    # matches our own IP (i.e. no external server was specified).
+    if plan.radius_enabled:
+        resolved_ip = plan.radius_server_ip or OWN_IP
+        if resolved_ip == OWN_IP:
+            all_radius_users = [
+                u.model_dump()
+                for np in node_plans.values()
+                for u in np.radius_users
+            ]
+            radius_server.set_session(plan.radius_secret, all_radius_users)
+            logger.info(
+                "RADIUS internal mode: armed with %d users", len(all_radius_users)
+            )
+        else:
+            logger.info(
+                "RADIUS external mode: forwarding to %s — built-in server idle",
+                resolved_ip,
+            )
 
     # Create session
     session = store.create_session(plan, list(node_plans.keys()))
@@ -449,7 +521,30 @@ async def stop_session(session_id: str):
     await agent_bus.broadcast("STOP_PLAN", {"session_id": session_id})
     # Also notify the dashboard
     await dashboard_bus.broadcast("stop_plan", {"session_id": session_id})
+    # Disarm the built-in RADIUS server so stale credentials don't linger
+    radius_server.clear_session()
     return {"stopped": True}
+
+
+@app.get("/api/radius/records")
+async def get_radius_records():
+    """
+    Return all RADIUS auth/accounting records captured by the built-in
+    server during the current (or most recent) session.
+    Only populated in internal mode; returns [] in external/ClearPass mode.
+    """
+    return radius_server.get_auth_records()
+
+
+@app.get("/api/health")
+async def health_with_radius_status():
+    """Extend /api/health with the controller's own IP and RADIUS mode hint."""
+    return {
+        "status":        "ok",
+        "server_time":   time.time(),
+        "controller_ip": OWN_IP,
+        **store.stats(),
+    }
 
 
 @app.delete("/api/sessions")
@@ -488,13 +583,7 @@ async def export_session_pdf(session_id: str):
     )
 
 
-# ---------------------------------------------------------------------------
-# REST API — Health
-# ---------------------------------------------------------------------------
-
-@app.get("/api/health")
-async def health():
-    return {"status": "ok", "server_time": time.time(), **store.stats()}
+# /api/health is defined above alongside the RADIUS records endpoint
 
 
 # ---------------------------------------------------------------------------

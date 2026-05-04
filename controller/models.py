@@ -10,6 +10,7 @@ Key models:
   StreamSnapshot — telemetry snapshot from one worker stream window
   AlertEvent   — fired when MOS stays below alert_mos_floor for alert_window_s
   TestSession  — one running or completed test run
+  RadiusUser   — per-user RADIUS assignment (username, IP, role, MAC, session ID)
 """
 
 from __future__ import annotations
@@ -156,10 +157,33 @@ class TestPlan(BaseModel):
     alert_mos_floor: float = 3.5  # MOS below this triggers an alert (0 = disabled)
     alert_window_s:  int   = 10   # seconds of sustained low MOS before alert fires
 
+    # RADIUS simulation
+    radius_enabled:   bool       = False
+    radius_server_ip: str | None = None   # None → auto-fill with controller's own IP
+    radius_secret:    str        = "testing123"
+    aruba_roles:      list[str]  = Field(
+        default_factory=lambda: ["Employee", "HR", "CEO", "IOT", "GUEST"]
+    )
+    nas_identifier:   str        = "netlab-controller"
+    nas_port_type:    int        = 15    # 15=Ethernet  19=Wireless-802.11
+
     # Assigned nodes (filled by controller before dispatch)
     node_ids:     list[str] = Field(default_factory=list)
 
     created_at:   float = Field(default_factory=time.time)
+
+
+class RadiusUser(BaseModel):
+    """
+    Per-user RADIUS assignment.  One instance is created per simulated user IP
+    at plan-dispatch time and forwarded in the NodePlan so the agent knows
+    which username/role to use for each alias IP.
+    """
+    username:        str        # e.g. "alex.chen"
+    ip_address:      str        # alias IP — e.g. "10.0.0.101"
+    mac_address:     str        # deterministic MAC derived from IP — e.g. "AA:BB:0A:00:00:65"
+    aruba_role:      str        # Aruba-User-Role VSA value — e.g. "Employee"
+    acct_session_id: str        # Acct-Session-Id: "{plan_id}-u{index}"
 
 
 class NodePlan(BaseModel):
@@ -175,10 +199,18 @@ class NodePlan(BaseModel):
     web_users:    int = 0
     web_urls:     list[str] = Field(default_factory=list)
     youtube_users: int = 0
-    youtube_url:   str = ""   # ← NEW: forwarded from TestPlan.youtube_url
+    youtube_url:   str = ""   # forwarded from TestPlan.youtube_url
 
     # UDP sessions: list of (session_id, type, role, local_ip, peer_ip)
     udp_sessions: list[dict] = Field(default_factory=list)
+
+    # RADIUS simulation — forwarded from TestPlan when radius_enabled=True
+    radius_enabled:       bool             = False
+    radius_server_ip:     str              = ""       # resolved controller/ClearPass IP
+    radius_secret:        str              = ""
+    nas_identifier:       str              = "netlab-controller"
+    nas_port_type:        int              = 15       # 15=Ethernet  19=Wireless-802.11
+    radius_users:         list[RadiusUser] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
