@@ -221,7 +221,16 @@ def distribute_plan(
     # ------------------------------------------------------------------
     # RADIUS user assignment
     # When radius_enabled, assign a fictitious username + role to every
-    # IP slot in each node's plan so agents know who each alias IP "is".
+    # IP slot across ALL nodes in a single pass so that paired call
+    # endpoints always receive different usernames.
+    #
+    # Assigning per-node independently (the naive approach) causes each
+    # node to start at index 0 of the user pool, meaning the first IP on
+    # node-A and the first IP on node-B both resolve to the same user —
+    # making it look like someone is calling themselves.
+    #
+    # Fix: collect every IP in node order, call assign_users() once, then
+    # slice the global result back into each node's RadiusUser list.
     # ------------------------------------------------------------------
     if plan.radius_enabled:
         # Resolve the RADIUS server IP:
@@ -230,25 +239,37 @@ def distribute_plan(
         resolved_radius_ip = plan.radius_server_ip or controller_ip or "127.0.0.1"
         roles = plan.aruba_roles or ["Employee"]
 
+        # Build a single ordered list of all IPs across every node so the
+        # user-pool index advances globally, not per-node.
+        all_ips_ordered: list[str] = []
+        node_ip_counts:  dict[str, int] = {}
         for node in nodes:
+            ips = list(node_slots[node.node_id])
+            node_ip_counts[node.node_id] = len(ips)
+            all_ips_ordered.extend(ips)
+
+        all_users = assign_users(
+            ip_list = all_ips_ordered,
+            roles   = roles,
+            plan_id = plan.plan_id,
+        )
+
+        # Slice the global list back into each node's plan
+        offset = 0
+        for node in nodes:
+            count = node_ip_counts[node.node_id]
             np = node_plans[node.node_id]
-            # Collect every IP this node will provision (union of all sessions + web/yt)
-            node_ips: list[str] = list(node_slots[node.node_id])
-            np.radius_users = assign_users(
-                ip_list  = node_ips,
-                roles    = roles,
-                plan_id  = plan.plan_id,
-            )
-            np.radius_enabled     = True
-            np.radius_server_ip   = resolved_radius_ip
-            np.radius_secret      = plan.radius_secret
-            np.nas_identifier     = plan.nas_identifier
-            np.nas_port_type      = plan.nas_port_type
+            np.radius_users     = all_users[offset : offset + count]
+            np.radius_enabled   = True
+            np.radius_server_ip = resolved_radius_ip
+            np.radius_secret    = plan.radius_secret
+            np.nas_identifier   = plan.nas_identifier
+            np.nas_port_type    = plan.nas_port_type
+            offset += count
 
         logger.info(
-            "RADIUS enabled: server=%s, roles=%s, users/node≈%d",
-            resolved_radius_ip, roles,
-            len(node_plans[nodes[0].node_id].radius_users) if nodes else 0,
+            "RADIUS enabled: server=%s, roles=%s, total_users=%d across %d node(s)",
+            resolved_radius_ip, roles, len(all_users), len(nodes),
         )
 
     logger.info(

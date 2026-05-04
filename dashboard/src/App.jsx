@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useControllerWS, api } from './hooks/useController.js'
 import { Header }         from './components/Header.jsx'
 import { NodePanel }      from './components/NodePanel.jsx'
@@ -136,21 +136,77 @@ function LiveTab({ nodes, snapshots, sessions, activeSession, onStop, onClear })
   )
 }
 
-// ── Setup tab layout ──────────────────────────────────────────────────────────
+// ── Setup tab layout — resizable split ───────────────────────────────────────
 
 function SetupTab({ nodes, activeSession, onSessionStarted, sessions, onStop, onClear }) {
+  // Default to roughly half the viewport; clamp between 300 px and viewport−300 px
+  const [leftWidth, setLeftWidth] = useState(
+    () => Math.max(300, Math.floor((window.innerWidth - 48) / 2))
+  )
+  const containerRef = useRef(null)
+
+  function onDragHandlePointerDown(e) {
+    e.preventDefault()
+    const container = containerRef.current
+    if (!container) return
+
+    function onMove(ev) {
+      const rect    = container.getBoundingClientRect()
+      const newWidth = ev.clientX - rect.left - 8   // 8 = half handle width
+      setLeftWidth(Math.max(300, Math.min(newWidth, rect.width - 300)))
+    }
+    function onUp() {
+      document.removeEventListener('pointermove', onMove)
+      document.removeEventListener('pointerup',   onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.body.style.cursor     = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('pointermove', onMove)
+    document.addEventListener('pointerup',   onUp)
+  }
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: 12, alignItems: 'start' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div ref={containerRef} style={{ display: 'flex', alignItems: 'start', gap: 0 }}>
+
+      {/* Left column — SetupPanel + NodePanel */}
+      <div style={{ width: leftWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <SetupPanel nodes={nodes} activeSession={activeSession} onSessionStarted={onSessionStarted} />
         <NodePanel nodes={nodes} />
       </div>
-      <SessionHistory
-        sessions={sessions}
-        activeSession={activeSession}
-        onStop={onStop}
-        onClear={onClear}
-      />
+
+      {/* Drag handle */}
+      <div
+        onPointerDown={onDragHandlePointerDown}
+        title="Drag to resize"
+        style={{
+          width: 16, flexShrink: 0, alignSelf: 'stretch',
+          cursor: 'col-resize',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          // subtle visual affordance — brightens on hover
+        }}
+        onMouseEnter={e => e.currentTarget.querySelector('div').style.background = 'var(--accent)'}
+        onMouseLeave={e => e.currentTarget.querySelector('div').style.background = 'var(--border2)'}
+      >
+        <div style={{
+          width: 3, height: 48, borderRadius: 2,
+          background: 'var(--border2)', transition: 'background 0.15s',
+          pointerEvents: 'none',
+        }} />
+      </div>
+
+      {/* Right column — Session history */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <SessionHistory
+          sessions={sessions}
+          activeSession={activeSession}
+          onStop={onStop}
+          onClear={onClear}
+        />
+      </div>
+
     </div>
   )
 }
